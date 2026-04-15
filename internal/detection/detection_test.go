@@ -51,6 +51,7 @@ func TestVictorialogsDetectedAsIs(t *testing.T) {
 	assertEqual(t, "uid", ds.UID, "tp-victorialogs-siem")
 	assertDSType(t, ds.DSType, VictoriaMetricsLogs)
 	assertEqual(t, "teleport_app_name", ds.TeleportAppName, "victorialogs-siem")
+	assertEqual(t, "url", ds.URL, "http://victorialogs-siem")
 }
 
 func TestVictorialogsNotMistakenForThanos(t *testing.T) {
@@ -82,6 +83,7 @@ func TestLokiDetectedAsIs(t *testing.T) {
 	assertEqual(t, "uid", ds.UID, "tp-eu-omega-loki-distributed")
 	assertDSType(t, ds.DSType, Loki)
 	assertEqual(t, "teleport_app_name", ds.TeleportAppName, "eu-omega-loki-distributed")
+	assertEqual(t, "url", ds.URL, "http://eu-omega-loki-distributed")
 }
 
 func TestLokiExactName(t *testing.T) {
@@ -203,6 +205,16 @@ func TestUIDLongNameGetsTruncatedWithHash(t *testing.T) {
 	ds2, _ := Detect(app(longName))
 	if ds.UID != ds2.UID {
 		t.Fatalf("UID not deterministic: %s vs %s", ds.UID, ds2.UID)
+	}
+	// Verify separator and hex suffix
+	if ds.UID[len(ds.UID)-9] != '-' {
+		t.Fatalf("expected '-' separator at position %d, got %q", len(ds.UID)-9, ds.UID[len(ds.UID)-9])
+	}
+	hexSuffix := ds.UID[len(ds.UID)-8:]
+	for _, c := range hexSuffix {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Fatalf("expected hex char in suffix, got %q in UID %q", c, ds.UID)
+		}
 	}
 }
 
@@ -333,6 +345,7 @@ func TestExpandLokiCreatesPerTenantDatasources(t *testing.T) {
 	assertEqual(t, "httpHeaderName1", fmt.Sprint(result[0].JSONData["httpHeaderName1"]), "X-Scope-OrgID")
 	assertEqual(t, "httpHeaderValue1", fmt.Sprint(result[0].SecureJSONData["httpHeaderValue1"]), "eu-aws-kube-infra-production")
 	assertEqual(t, "name[1]", result[1].Name, "eu-aws-kube-common-production-loki")
+	assertEqual(t, "teleportAppName[0]", result[0].TeleportAppName, "eu-omega-loki-distributed")
 }
 
 func TestExpandLokiPreservesNonLoki(t *testing.T) {
@@ -361,6 +374,8 @@ func TestExpandLokiTenantDSHasCorrectJSONData(t *testing.T) {
 	}
 	clusters := []string{"my-cluster"}
 	result := ExpandLokiTenants([]DetectedDatasource{ds}, clusters)
+	assertEqual(t, "name", result[0].Name, "my-cluster-loki")
+	assertEqual(t, "uid", result[0].UID, "tp-my-cluster-loki")
 	if result[0].JSONData["maxLines"] != 1000 {
 		t.Fatalf("expected maxLines=1000, got %v", result[0].JSONData["maxLines"])
 	}
@@ -369,6 +384,18 @@ func TestExpandLokiTenantDSHasCorrectJSONData(t *testing.T) {
 		t.Fatal("expected non-nil SecureJSONData")
 	}
 	assertEqual(t, "httpHeaderValue1", fmt.Sprint(result[0].SecureJSONData["httpHeaderValue1"]), "my-cluster")
+}
+
+func TestExpandLokiEmptyClusterSlicePassthrough(t *testing.T) {
+	ds, ok := Detect(app("eu-omega-loki-distributed"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	result := ExpandLokiTenants([]DetectedDatasource{ds}, []string{})
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	assertEqual(t, "name", result[0].Name, "eu-omega-loki-distributed")
 }
 
 func TestExpandLokiSkipsInvalidTenantUID(t *testing.T) {

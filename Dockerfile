@@ -1,7 +1,6 @@
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
 
-COPY go.mod ./
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags="-s -w" -o /teleport-grafana-datasource-sync .
 

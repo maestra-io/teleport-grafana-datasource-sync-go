@@ -17,6 +17,8 @@ type Config struct {
 	GrafanaAPIKeyFile string
 	SyncInterval      time.Duration
 	DryRun            bool
+	AppsFile          string
+	KubeClustersFile  string
 }
 
 // FromEnv loads configuration from environment variables with sensible defaults.
@@ -46,11 +48,16 @@ func FromEnv() (*Config, error) {
 		return nil, fmt.Errorf("invalid DRY_RUN: must be a boolean value: %w", err)
 	}
 
+	appsFile := envOr("TELEPORT_APPS_FILE", "/shared/apps.json")
+	kubeClustersFile := envOr("KUBE_CLUSTERS_FILE", "/shared/kube-clusters.json")
+
 	return &Config{
 		GrafanaURL:        strings.TrimRight(grafanaURL, "/"),
 		GrafanaAPIKeyFile: apiKeyFile,
 		SyncInterval:      time.Duration(intervalSecs) * time.Second,
 		DryRun:            dryRun,
+		AppsFile:          appsFile,
+		KubeClustersFile:  kubeClustersFile,
 	}, nil
 }
 

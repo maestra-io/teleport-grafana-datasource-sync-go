@@ -29,13 +29,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	appsFile := envOr("TELEPORT_APPS_FILE", "/shared/apps.json")
-	kubeClustersFile := envOr("KUBE_CLUSTERS_FILE", "/shared/kube-clusters.json")
-
 	slog.Info("starting teleport-grafana-datasource-sync",
 		"grafana", cfg.GrafanaURL,
-		"apps_file", appsFile,
-		"kube_clusters_file", kubeClustersFile,
+		"apps_file", cfg.AppsFile,
+		"kube_clusters_file", cfg.KubeClustersFile,
 		"api_key_file", cfg.GrafanaAPIKeyFile,
 		"interval", cfg.SyncInterval,
 		"dry_run", cfg.DryRun,
@@ -59,7 +56,7 @@ func main() {
 	defer ticker.Stop()
 
 	// Run first sync immediately at startup.
-	runSyncCycle(ctx, appsFile, kubeClustersFile, grafanaClient, cfg.DryRun)
+	runSyncCycle(ctx, cfg.AppsFile, cfg.KubeClustersFile, grafanaClient, cfg.DryRun)
 
 loop:
 	for {
@@ -68,7 +65,7 @@ loop:
 			slog.Info("received shutdown signal")
 			break loop
 		case <-ticker.C:
-			runSyncCycle(ctx, appsFile, kubeClustersFile, grafanaClient, cfg.DryRun)
+			runSyncCycle(ctx, cfg.AppsFile, cfg.KubeClustersFile, grafanaClient, cfg.DryRun)
 		}
 	}
 
@@ -160,11 +157,4 @@ func newHealthServer() (*http.Server, net.Listener) {
 		WriteTimeout: 5 * time.Second,
 		IdleTimeout:  30 * time.Second,
 	}, ln
-}
-
-func envOr(key, defaultVal string) string {
-	if v, ok := os.LookupEnv(key); ok {
-		return v
-	}
-	return defaultVal
 }

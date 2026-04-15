@@ -147,7 +147,7 @@ func (c *Client) CreateDatasource(ctx context.Context, req *DatasourceRequest) e
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusConflict {
-		return fmt.Errorf("create datasource %q (uid=%s): already exists: %s", req.Name, req.UID, string(respBody))
+		return fmt.Errorf("create datasource %q (uid=%q): already exists: %s", req.Name, req.UID, string(respBody))
 	}
 	return fmt.Errorf("create datasource %q failed: %d %s", req.Name, resp.StatusCode, string(respBody))
 }
@@ -216,5 +216,5 @@ func (c *Client) DeleteDatasource(ctx context.Context, uid string) error {
 	}
 
 	respBody, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("delete datasource uid=%s failed: %d %s", uid, resp.StatusCode, string(respBody))
+	return fmt.Errorf("delete datasource uid=%q failed: %d %s", uid, resp.StatusCode, string(respBody))
 }

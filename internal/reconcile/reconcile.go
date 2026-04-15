@@ -118,7 +118,7 @@ func Reconcile(ctx context.Context, client *grafana.Client, desired []detection.
 		}
 
 		// Don't delete Loki datasources when tenant discovery is unavailable.
-		if !lokiReady && existing.Type == "loki" {
+		if !lokiReady && existing.Type == detection.Loki.GrafanaType() {
 			slog.Info("preserving Loki datasource",
 				"name", existing.Name,
 				"uid", existing.UID,

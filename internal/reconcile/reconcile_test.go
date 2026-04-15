@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/detection"
@@ -171,6 +172,12 @@ func TestJSONDataSubsetMatch(t *testing.T) {
 			want:     false,
 		},
 		{
+			name:     "missing key",
+			existing: map[string]any{"httpMethod": "POST"},
+			desired:  map[string]any{"httpMethod": "POST", "timeInterval": "15s"},
+			want:     false,
+		},
+		{
 			name:     "empty desired always matches",
 			existing: map[string]any{"anything": true},
 			desired:  map[string]any{},
@@ -211,6 +218,18 @@ func TestValuesEqualStrings(t *testing.T) {
 func TestValuesEqualDifferentTypes(t *testing.T) {
 	if valuesEqual("1000", 1000) {
 		t.Fatal("expected string != int")
+	}
+}
+
+func TestValuesEqualJSONNumber(t *testing.T) {
+	if !valuesEqual(json.Number("1000"), 1000) {
+		t.Fatal("expected json.Number(1000) == int(1000)")
+	}
+	if !valuesEqual(json.Number("1000"), float64(1000)) {
+		t.Fatal("expected json.Number(1000) == float64(1000)")
+	}
+	if valuesEqual(json.Number("999"), 1000) {
+		t.Fatal("expected json.Number(999) != int(1000)")
 	}
 }
 
@@ -264,6 +283,14 @@ func TestSecureJSONFieldsKeyMissingFromDetailTriggersChange(t *testing.T) {
 	) {
 		t.Fatal("expected no match")
 	}
+}
+
+func TestChangedFieldsSecureFieldMissingTriggersUpdate(t *testing.T) {
+	existing := makeExisting("foo", "foo-thanos-query")
+	existing.SecureJSONFields = map[string]bool{"otherKey": true}
+	desired := makeDetected("foo", "foo-thanos-query")
+	desired.SecureJSONData = map[string]any{"httpHeaderValue1": "tenant-a"}
+	assertContains(t, changedFields(&existing, &desired), "secureJsonData")
 }
 
 func TestChangedFieldsNoSpuriousSecureJSONUpdateFromListAPI(t *testing.T) {

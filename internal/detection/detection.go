@@ -123,7 +123,7 @@ func Detect(app teleport.App) (DetectedDatasource, bool) {
 
 	if !isValidUID(uid) {
 		slog.Warn("skipping app with invalid UID characters",
-			"name", name, "uid", uid, "reason", "invalid characters for Grafana")
+			"name", name, "uid", uid)
 		return DetectedDatasource{}, false
 	}
 
@@ -159,7 +159,7 @@ func ExpandLokiTenants(datasources []DetectedDatasource, kubeClusters []string) 
 
 			if !isValidUID(uid) {
 				slog.Warn("skipping Loki tenant with invalid UID characters",
-					"tenant", tenant, "uid", uid, "reason", "invalid characters for Grafana")
+					"tenant", tenant, "uid", uid)
 				continue
 			}
 
@@ -197,11 +197,9 @@ func makeUID(name string) string {
 
 	// UIDPrefix + truncated name + "-" + 8-char hash = grafanaUIDMaxLen
 	budget := grafanaUIDMaxLen - len(grafana.UIDPrefix) - 1 - 8
-	end := budget
-	if end > len(name) {
-		end = len(name)
-	}
-	return grafana.UIDPrefix + name[:end] + "-" + suffix[8:]
+	// budget is always < len(name) here: we only reach this path when
+	// len(name) > grafanaUIDMaxLen - len(UIDPrefix), so budget (28) < len(name).
+	return grafana.UIDPrefix + name[:budget] + "-" + suffix[8:]
 }
 
 // isLokiApp returns true if the name matches "loki" at a word boundary:
