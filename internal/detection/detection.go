@@ -1,8 +1,10 @@
+// Package detection implements rules for identifying monitoring apps
+// among Teleport applications and mapping them to Grafana datasource types.
 package detection
 
 import (
-	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"strings"
 
@@ -10,19 +12,24 @@ import (
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/teleport"
 )
 
-// Maximum UID length in Grafana (hard limit enforced by API, returns 400 if exceeded).
+// grafanaUIDMaxLen is the maximum UID length enforced by the Grafana API.
 const grafanaUIDMaxLen = 40
 
 // DatasourceType represents a Grafana datasource type.
 type DatasourceType int
 
 const (
+	// Prometheus datasource backed by a Thanos Query endpoint.
 	Prometheus DatasourceType = iota
+	// VictoriaMetricsMetrics datasource backed by a VMAuth endpoint.
 	VictoriaMetricsMetrics
+	// VictoriaMetricsLogs datasource backed by a VictoriaLogs endpoint.
 	VictoriaMetricsLogs
+	// Loki datasource, potentially expanded into per-tenant datasources.
 	Loki
 )
 
+// GrafanaType returns the Grafana plugin type identifier.
 func (t DatasourceType) GrafanaType() string {
 	switch t {
 	case Prometheus:
@@ -38,6 +45,12 @@ func (t DatasourceType) GrafanaType() string {
 	}
 }
 
+// String implements fmt.Stringer.
+func (t DatasourceType) String() string {
+	return t.GrafanaType()
+}
+
+// DefaultJSONData returns the default jsonData for this datasource type.
 func (t DatasourceType) DefaultJSONData() map[string]any {
 	switch t {
 	case Prometheus:
@@ -47,7 +60,7 @@ func (t DatasourceType) DefaultJSONData() map[string]any {
 		}
 	case Loki:
 		return map[string]any{
-			"maxLines": json.Number("1000"),
+			"maxLines": 1000,
 		}
 	default:
 		return map[string]any{}
@@ -66,7 +79,14 @@ type DetectedDatasource struct {
 }
 
 // Detect applies detection rules to a Teleport app.
-// Returns the detected datasource and true, or zero value and false if the app doesn't match.
+//
+// Rule priority (highest first):
+//  1. victorialogs- prefix → VictoriaMetricsLogs
+//  2. loki word-boundary match → Loki
+//  3. -thanos-query suffix → Prometheus (suffix stripped from name)
+//  4. -vmauth suffix → VictoriaMetricsMetrics (suffix stripped from name)
+//
+// Returns the detected datasource and true, or zero value and false if no rule matches.
 func Detect(app teleport.App) (DetectedDatasource, bool) {
 	name := app.Name
 
@@ -74,15 +94,12 @@ func Detect(app teleport.App) (DetectedDatasource, bool) {
 	var dsName string
 
 	switch {
-	// 1. Prefix rules first (higher priority).
 	case strings.HasPrefix(name, "victorialogs-"):
 		dsType = VictoriaMetricsLogs
 		dsName = name
-	// 2. Loki: word-boundary match.
 	case isLokiApp(name):
 		dsType = Loki
 		dsName = name
-	// 3. Suffix rules.
 	case strings.HasSuffix(name, "-thanos-query"):
 		stripped := strings.TrimSuffix(name, "-thanos-query")
 		if stripped == "" {
@@ -104,7 +121,6 @@ func Detect(app teleport.App) (DetectedDatasource, bool) {
 	url := "http://" + name
 	uid := makeUID(dsName)
 
-	// Validate UID characters: Grafana v12+ allows only [a-zA-Z0-9-].
 	if !isValidUID(uid) {
 		slog.Warn("skipping app: UID contains invalid characters for Grafana",
 			"name", name, "uid", uid)
@@ -122,7 +138,9 @@ func Detect(app teleport.App) (DetectedDatasource, bool) {
 	}, true
 }
 
-// ExpandLokiTenants expands Loki datasources into per-tenant datasources.
+// ExpandLokiTenants expands Loki datasources into per-tenant datasources
+// using Teleport kube cluster names. The original Loki datasource is replaced
+// by one datasource per tenant. Non-Loki datasources pass through unchanged.
 func ExpandLokiTenants(datasources []DetectedDatasource, kubeClusters []string) []DetectedDatasource {
 	if len(kubeClusters) == 0 {
 		return datasources
@@ -152,7 +170,7 @@ func ExpandLokiTenants(datasources []DetectedDatasource, kubeClusters []string) 
 				URL:             ds.URL,
 				TeleportAppName: ds.TeleportAppName,
 				JSONData: map[string]any{
-					"maxLines":        json.Number("1000"),
+					"maxLines":        1000,
 					"httpHeaderName1": "X-Scope-OrgID",
 				},
 				SecureJSONData: map[string]any{
@@ -165,30 +183,29 @@ func ExpandLokiTenants(datasources []DetectedDatasource, kubeClusters []string) 
 }
 
 // makeUID generates a Grafana UID from a datasource name, respecting the 40-char limit.
+// If the full UID fits, it is used directly. Otherwise the name is truncated and an
+// 8-character FNV-1a hash suffix is appended for deterministic collision resistance.
 func makeUID(name string) string {
 	full := grafana.UIDPrefix + name
 	if len(full) <= grafanaUIDMaxLen {
 		return full
 	}
 
-	// FNV-1a 64-bit hash for deterministic short suffix.
-	var hash uint64 = 0xcbf29ce484222325
-	for i := 0; i < len(name); i++ {
-		hash ^= uint64(name[i])
-		hash *= 0x100000001b3
-	}
-	suffix := fmt.Sprintf("%016x", hash)
+	h := fnv.New64a()
+	h.Write([]byte(name))
+	suffix := fmt.Sprintf("%016x", h.Sum64())
 
-	// "tp-" (3) + truncated name + "-" + 8-char hash = 40.
+	// UIDPrefix + truncated name + "-" + 8-char hash = grafanaUIDMaxLen
 	budget := grafanaUIDMaxLen - len(grafana.UIDPrefix) - 1 - 8
 	end := budget
 	if end > len(name) {
 		end = len(name)
 	}
-	truncated := name[:end]
-	return grafana.UIDPrefix + truncated + "-" + suffix[:8]
+	return grafana.UIDPrefix + name[:end] + "-" + suffix[:8]
 }
 
+// isLokiApp returns true if the name matches "loki" at a word boundary:
+// exact "loki", "loki-*" prefix, "*-loki" suffix, or "*-loki-*" infix.
 func isLokiApp(name string) bool {
 	return name == "loki" ||
 		strings.HasPrefix(name, "loki-") ||
@@ -196,7 +213,11 @@ func isLokiApp(name string) bool {
 		strings.Contains(name, "-loki-")
 }
 
+// isValidUID checks that the UID contains only Grafana-allowed characters [a-zA-Z0-9-].
 func isValidUID(uid string) bool {
+	if len(uid) == 0 {
+		return false
+	}
 	for i := 0; i < len(uid); i++ {
 		b := uid[i]
 		if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '-') {

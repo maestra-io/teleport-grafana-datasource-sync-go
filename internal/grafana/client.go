@@ -1,3 +1,4 @@
+// Package grafana provides a client for the Grafana datasource API.
 package grafana
 
 import (
@@ -14,24 +15,28 @@ import (
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/config"
 )
 
+// UIDPrefix is prepended to all managed datasource UIDs.
 const UIDPrefix = "tp-"
 
+// Client communicates with the Grafana datasource API.
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	apiKeyFile string
 }
 
+// Datasource represents a Grafana datasource returned by the list API.
 type Datasource struct {
-	UID              string         `json:"uid"`
-	Name             string         `json:"name"`
-	Type             string         `json:"type"`
-	URL              string         `json:"url"`
-	Access           string         `json:"access"`
-	JSONData         map[string]any `json:"jsonData"`
-	SecureJSONFields map[string]any `json:"secureJsonFields"`
+	UID              string          `json:"uid"`
+	Name             string          `json:"name"`
+	Type             string          `json:"type"`
+	URL              string          `json:"url"`
+	Access           string          `json:"access"`
+	JSONData         map[string]any  `json:"jsonData"`
+	SecureJSONFields map[string]bool `json:"secureJsonFields"`
 }
 
+// DatasourceRequest is the payload for creating or updating a datasource.
 type DatasourceRequest struct {
 	Name           string         `json:"name"`
 	UID            string         `json:"uid"`
@@ -42,13 +47,16 @@ type DatasourceRequest struct {
 	SecureJSONData map[string]any `json:"secureJsonData,omitempty"`
 }
 
+// NewClient creates a Grafana API client. The API key is read fresh from
+// apiKeyFile on every request to support Vault/VSO rotation.
 func NewClient(baseURL, apiKeyFile string) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 10 * time.Second
+
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: 10 * time.Second,
-			},
+			Timeout:   30 * time.Second,
+			Transport: transport,
 		},
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKeyFile: apiKeyFile,
@@ -63,7 +71,7 @@ func (c *Client) apiKey() (string, error) {
 func (c *Client) ListManagedDatasources(ctx context.Context) ([]Datasource, error) {
 	key, err := c.apiKey()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading API key: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/datasources", nil)
@@ -85,10 +93,10 @@ func (c *Client) ListManagedDatasources(ctx context.Context) ([]Datasource, erro
 
 	var all []Datasource
 	if err := json.NewDecoder(resp.Body).Decode(&all); err != nil {
-		return nil, fmt.Errorf("deserializing Grafana datasource list: %w", err)
+		return nil, fmt.Errorf("deserializing datasource list: %w", err)
 	}
 
-	managed := make([]Datasource, 0)
+	var managed []Datasource
 	for _, ds := range all {
 		if strings.HasPrefix(ds.UID, UIDPrefix) {
 			managed = append(managed, ds)
@@ -102,10 +110,11 @@ func (c *Client) ListManagedDatasources(ctx context.Context) ([]Datasource, erro
 	return managed, nil
 }
 
+// CreateDatasource creates a new datasource in Grafana.
 func (c *Client) CreateDatasource(ctx context.Context, req *DatasourceRequest) error {
 	key, err := c.apiKey()
 	if err != nil {
-		return err
+		return fmt.Errorf("reading API key: %w", err)
 	}
 
 	body, err := json.Marshal(req)
@@ -127,20 +136,22 @@ func (c *Client) CreateDatasource(ctx context.Context, req *DatasourceRequest) e
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusConflict {
-		return fmt.Errorf("create datasource '%s' (uid=%s) conflict — already exists: %s", req.Name, req.UID, string(respBody))
+		return fmt.Errorf("create datasource %q (uid=%s): already exists: %s", req.Name, req.UID, string(respBody))
 	}
-	return fmt.Errorf("create datasource '%s' failed: %d %s", req.Name, resp.StatusCode, string(respBody))
+	return fmt.Errorf("create datasource %q failed: %d %s", req.Name, resp.StatusCode, string(respBody))
 }
 
+// UpdateDatasource updates an existing datasource by UID.
 func (c *Client) UpdateDatasource(ctx context.Context, req *DatasourceRequest) error {
 	key, err := c.apiKey()
 	if err != nil {
-		return err
+		return fmt.Errorf("reading API key: %w", err)
 	}
 
 	body, err := json.Marshal(req)
@@ -162,17 +173,19 @@ func (c *Client) UpdateDatasource(ctx context.Context, req *DatasourceRequest) e
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
 
 	respBody, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("update datasource '%s' failed: %d %s", req.Name, resp.StatusCode, string(respBody))
+	return fmt.Errorf("update datasource %q failed: %d %s", req.Name, resp.StatusCode, string(respBody))
 }
 
+// DeleteDatasource deletes a datasource by UID. A 404 is treated as success.
 func (c *Client) DeleteDatasource(ctx context.Context, uid string) error {
 	key, err := c.apiKey()
 	if err != nil {
-		return err
+		return fmt.Errorf("reading API key: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/api/datasources/uid/"+uid, nil)
@@ -187,13 +200,15 @@ func (c *Client) DeleteDatasource(ctx context.Context, uid string) error {
 	}
 	defer resp.Body.Close()
 
-	if (resp.StatusCode >= 200 && resp.StatusCode < 300) || resp.StatusCode == http.StatusNotFound {
-		if resp.StatusCode == http.StatusNotFound {
-			slog.Debug("datasource already absent, skipping delete", "uid", uid)
-		}
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound {
+		slog.Debug("datasource already absent, skipping delete", "uid", uid)
+		return nil
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
 
-	respBody, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("delete datasource uid=%s failed: %d %s", uid, resp.StatusCode, string(respBody))
+	return fmt.Errorf("delete datasource uid=%s failed: %d", uid, resp.StatusCode)
 }

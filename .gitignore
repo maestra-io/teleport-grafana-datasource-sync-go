@@ -1,1 +1,4 @@
 teleport-grafana-datasource-sync
+*.test
+*.out
+coverage.*

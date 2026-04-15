@@ -1,19 +1,25 @@
+// Package config handles application configuration from environment variables.
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
+// Config holds the application configuration.
 type Config struct {
 	GrafanaURL        string
 	GrafanaAPIKeyFile string
-	SyncIntervalSecs  int
+	SyncInterval      time.Duration
 	DryRun            bool
 }
 
+// FromEnv loads configuration from environment variables with sensible defaults.
 func FromEnv() (*Config, error) {
 	grafanaURL := envOr("GRAFANA_URL", "http://grafana.grafana.svc:80")
 	if !strings.HasPrefix(grafanaURL, "http://") && !strings.HasPrefix(grafanaURL, "https://") {
@@ -26,24 +32,24 @@ func FromEnv() (*Config, error) {
 	}
 
 	intervalStr := envOr("SYNC_INTERVAL_SECS", "30")
-	interval, err := strconv.Atoi(intervalStr)
+	intervalSecs, err := strconv.Atoi(intervalStr)
 	if err != nil {
 		return nil, fmt.Errorf("SYNC_INTERVAL_SECS must be a positive integer: %w", err)
 	}
-	if interval <= 0 {
+	if intervalSecs <= 0 {
 		return nil, fmt.Errorf("SYNC_INTERVAL_SECS must be > 0")
 	}
 
 	dryRunStr := envOr("DRY_RUN", "false")
 	dryRun, err := strconv.ParseBool(dryRunStr)
 	if err != nil {
-		return nil, fmt.Errorf("DRY_RUN must be 'true' or 'false': %w", err)
+		return nil, fmt.Errorf("DRY_RUN must be a boolean value: %w", err)
 	}
 
 	return &Config{
-		GrafanaURL:        grafanaURL,
+		GrafanaURL:        strings.TrimRight(grafanaURL, "/"),
 		GrafanaAPIKeyFile: apiKeyFile,
-		SyncIntervalSecs:  interval,
+		SyncInterval:      time.Duration(intervalSecs) * time.Second,
 		DryRun:            dryRun,
 	}, nil
 }
@@ -54,12 +60,12 @@ func ReadGrafanaAPIKey(path string) (string, error) {
 	if err == nil {
 		key := strings.TrimSpace(string(data))
 		if key == "" {
-			return "", fmt.Errorf("Grafana API key is empty (from file %s)", path)
+			return "", fmt.Errorf("grafana API key is empty (from file %s)", path)
 		}
 		return key, nil
 	}
 
-	if !os.IsNotExist(err) {
+	if !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("failed to read API key from %s: %w", path, err)
 	}
 
@@ -71,7 +77,7 @@ func ReadGrafanaAPIKey(path string) (string, error) {
 
 	key := strings.TrimSpace(val)
 	if key == "" {
-		return "", fmt.Errorf("Grafana API key is empty (from env var GRAFANA_API_KEY)")
+		return "", fmt.Errorf("grafana API key is empty (from env var GRAFANA_API_KEY)")
 	}
 	return key, nil
 }

@@ -1,3 +1,5 @@
+// Package teleport reads Teleport resource data from JSON files
+// written by the tctl sidecar container.
 package teleport
 
 import (
@@ -35,7 +37,7 @@ type tctlKubeServerResource struct {
 }
 
 // ListApps reads apps from the JSON file written by the tctl sidecar.
-// Waits up to 120s for the file to appear on first run.
+// Waits for the file to appear (up to the context deadline or an internal timeout).
 func ListApps(ctx context.Context, appsFile string) ([]App, error) {
 	if err := waitForFile(ctx, appsFile); err != nil {
 		return nil, err
@@ -51,9 +53,11 @@ func ListApps(ctx context.Context, appsFile string) ([]App, error) {
 		return nil, fmt.Errorf("parsing tctl apps JSON: %w", err)
 	}
 
-	apps := make([]App, len(resources))
-	for i, r := range resources {
-		apps[i] = App{Name: r.Metadata.Name}
+	apps := make([]App, 0, len(resources))
+	for _, r := range resources {
+		if r.Metadata.Name != "" {
+			apps = append(apps, App{Name: r.Metadata.Name})
+		}
 	}
 
 	slog.Info("loaded apps from tctl sidecar JSON", "count", len(apps))
@@ -62,7 +66,7 @@ func ListApps(ctx context.Context, appsFile string) ([]App, error) {
 
 // ListKubeClusters reads kube cluster names from the JSON file.
 // Returns nil if the file is missing, empty, or unparseable.
-func ListKubeClusters(kubeClustersFile string) []string {
+func ListKubeClusters(ctx context.Context, kubeClustersFile string) []string {
 	data, err := os.ReadFile(kubeClustersFile)
 	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 		slog.Info("kube clusters file not ready, Loki tenant discovery skipped",
@@ -77,12 +81,15 @@ func ListKubeClusters(kubeClustersFile string) []string {
 		return nil
 	}
 
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	var names []string
 	for _, r := range resources {
 		name := r.Spec.Cluster.Metadata.Name
-		if !seen[name] {
-			seen[name] = true
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
 			names = append(names, name)
 		}
 	}
@@ -98,6 +105,10 @@ func waitForFile(ctx context.Context, path string) error {
 	const poll = 2 * time.Second
 
 	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+	lastLog := time.Now()
 
 	for {
 		info, err := os.Stat(path)
@@ -106,22 +117,22 @@ func waitForFile(ctx context.Context, path string) error {
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out after %ds waiting for tctl sidecar to write %s",
-				int(timeout.Seconds()), path)
+			return fmt.Errorf("timed out after %s waiting for tctl sidecar to write %s",
+				timeout, path)
+		}
+
+		if time.Since(lastLog) >= 10*time.Second {
+			slog.Info("waiting for tctl sidecar",
+				"elapsed", time.Since(deadline.Add(-timeout)).Truncate(time.Second),
+				"path", path,
+			)
+			lastLog = time.Now()
 		}
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(poll):
-		}
-
-		elapsed := time.Since(deadline.Add(-timeout))
-		if int(elapsed.Seconds())%10 == 0 {
-			slog.Info("waiting for tctl sidecar...",
-				"elapsed_secs", int(elapsed.Seconds()),
-				"path", path,
-			)
+		case <-ticker.C:
 		}
 	}
 }

@@ -14,9 +14,11 @@ import (
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/config"
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/detection"
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/grafana"
-	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/sync"
+	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/reconcile"
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/teleport"
 )
+
+const healthAddr = "0.0.0.0:8080"
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -35,20 +37,25 @@ func main() {
 		"apps_file", appsFile,
 		"kube_clusters_file", kubeClustersFile,
 		"api_key_file", cfg.GrafanaAPIKeyFile,
-		"interval_secs", cfg.SyncIntervalSecs,
+		"interval", cfg.SyncInterval,
 		"dry_run", cfg.DryRun,
-		"health_port", 8080,
+		"health_addr", healthAddr,
 	)
 
-	// Spawn health endpoint early so K8s probes work during startup.
-	go healthServer()
+	// Start health endpoint early so K8s probes work during startup.
+	healthServer, healthLn := newHealthServer()
+	go func() {
+		if err := healthServer.Serve(healthLn); err != nil && err != http.ErrServerClosed {
+			slog.Error("health server error", "error", err)
+		}
+	}()
 
 	grafanaClient := grafana.NewClient(cfg.GrafanaURL, cfg.GrafanaAPIKeyFile)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	ticker := time.NewTicker(time.Duration(cfg.SyncIntervalSecs) * time.Second)
+	ticker := time.NewTicker(cfg.SyncInterval)
 	defer ticker.Stop()
 
 	// Run first sync immediately at startup.
@@ -57,15 +64,18 @@ func main() {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("received shutdown signal, shutting down")
-			goto shutdown
+			slog.Info("received shutdown signal")
 		case <-ticker.C:
+			runSyncCycle(ctx, appsFile, kubeClustersFile, grafanaClient, cfg.DryRun)
+			continue
 		}
-
-		runSyncCycle(ctx, appsFile, kubeClustersFile, grafanaClient, cfg.DryRun)
+		break
 	}
 
-shutdown:
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	_ = healthServer.Shutdown(shutdownCtx)
+
 	slog.Info("shutdown complete")
 }
 
@@ -84,17 +94,16 @@ func runSyncCycle(ctx context.Context, appsFile, kubeClustersFile string, grafan
 		"deleted", stats.Deleted,
 		"unchanged", stats.Unchanged,
 		"failed", stats.Failed,
-		"dry_run", dryRun,
 	)
 }
 
-func runSync(ctx context.Context, appsFile, kubeClustersFile string, grafanaClient *grafana.Client, dryRun bool) (*sync.Stats, error) {
+func runSync(ctx context.Context, appsFile, kubeClustersFile string, grafanaClient *grafana.Client, dryRun bool) (*reconcile.Stats, error) {
 	apps, err := teleport.ListApps(ctx, appsFile)
 	if err != nil {
 		return nil, fmt.Errorf("listing apps: %w", err)
 	}
 
-	kubeClusters := teleport.ListKubeClusters(kubeClustersFile)
+	kubeClusters := teleport.ListKubeClusters(ctx, kubeClustersFile)
 
 	detected := make([]detection.DetectedDatasource, 0, len(apps))
 	for _, app := range apps {
@@ -103,19 +112,16 @@ func runSync(ctx context.Context, appsFile, kubeClustersFile string, grafanaClie
 		}
 	}
 
+	lokiReady := kubeClusters != nil
 	var desired []detection.DetectedDatasource
-	var lokiReady bool
-
-	if kubeClusters != nil {
+	if lokiReady {
 		desired = detection.ExpandLokiTenants(detected, kubeClusters)
-		lokiReady = true
 	} else {
 		for _, d := range detected {
 			if d.DSType != detection.Loki {
 				desired = append(desired, d)
 			}
 		}
-		lokiReady = false
 	}
 
 	kubeClustersCount := -1
@@ -130,10 +136,10 @@ func runSync(ctx context.Context, appsFile, kubeClustersFile string, grafanaClie
 		"loki_ready", lokiReady,
 	)
 
-	return sync.Reconcile(ctx, grafanaClient, desired, dryRun, lokiReady)
+	return reconcile.Reconcile(ctx, grafanaClient, desired, dryRun, lokiReady)
 }
 
-func healthServer() {
+func newHealthServer() (*http.Server, net.Listener) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", "2")
@@ -141,22 +147,18 @@ func healthServer() {
 		fmt.Fprint(w, "ok")
 	})
 
-	server := &http.Server{
+	ln, err := net.Listen("tcp", healthAddr)
+	if err != nil {
+		slog.Error("failed to bind health endpoint", "addr", healthAddr, "error", err)
+		os.Exit(1)
+	}
+	slog.Info("health endpoint listening", "addr", healthAddr)
+
+	return &http.Server{
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
-	}
-
-	ln, err := net.Listen("tcp", "0.0.0.0:8080")
-	if err != nil {
-		slog.Error("failed to bind health endpoint on :8080, exiting", "error", err)
-		os.Exit(1)
-	}
-	slog.Info("health endpoint listening on :8080")
-
-	if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
-		slog.Error("health server error", "error", err)
-	}
+	}, ln
 }
 
 func envOr(key, defaultVal string) string {

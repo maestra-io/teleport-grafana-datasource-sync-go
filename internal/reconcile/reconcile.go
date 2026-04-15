@@ -1,15 +1,21 @@
-package sync
+// Package reconcile implements the datasource reconciliation loop,
+// diffing desired state (from Teleport) against actual state (from Grafana).
+package reconcile
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/detection"
 	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/grafana"
 )
 
+// accessProxy is the Grafana access mode used for all managed datasources.
+const accessProxy = "proxy"
+
+// Stats holds counters for a single reconciliation cycle.
 type Stats struct {
 	Created   int
 	Updated   int
@@ -18,9 +24,16 @@ type Stats struct {
 	Failed    int
 }
 
-// Reconcile desired datasources (from Teleport) with actual (from Grafana).
+// Reconcile diffs desired datasources (from Teleport) against actual (from Grafana).
+// Individual operation failures are logged and counted in Stats.Failed — the function
+// continues processing remaining datasources. A non-nil error is only returned when
+// the initial list from Grafana fails.
+//
+// When lokiReady is false, existing Loki datasources are preserved even if absent
+// from the desired list, to avoid deleting tenant-scoped datasources when the kube
+// clusters file is temporarily unavailable.
 func Reconcile(ctx context.Context, client *grafana.Client, desired []detection.DetectedDatasource, dryRun bool, lokiReady bool) (*Stats, error) {
-	desired = dedupDesired(desired)
+	desired = deduplicateDesired(desired)
 
 	actual, err := client.ListManagedDatasources(ctx)
 	if err != nil {
@@ -32,20 +45,24 @@ func Reconcile(ctx context.Context, client *grafana.Client, desired []detection.
 		actualByUID[actual[i].UID] = &actual[i]
 	}
 
-	desiredUIDs := make(map[string]bool, len(desired))
+	desiredUIDs := make(map[string]struct{}, len(desired))
 	for _, d := range desired {
-		desiredUIDs[d.UID] = true
+		desiredUIDs[d.UID] = struct{}{}
 	}
 
 	stats := &Stats{}
 
 	for _, ds := range desired {
+		if err := ctx.Err(); err != nil {
+			return stats, err
+		}
+
 		req := &grafana.DatasourceRequest{
 			Name:           ds.Name,
 			UID:            ds.UID,
 			Type:           ds.DSType.GrafanaType(),
 			URL:            ds.URL,
-			Access:         "proxy",
+			Access:         accessProxy,
 			JSONData:       ds.JSONData,
 			SecureJSONData: ds.SecureJSONData,
 		}
@@ -90,8 +107,12 @@ func Reconcile(ctx context.Context, client *grafana.Client, desired []detection.
 	}
 
 	for i := range actual {
+		if err := ctx.Err(); err != nil {
+			return stats, err
+		}
+
 		existing := &actual[i]
-		if desiredUIDs[existing.UID] {
+		if _, ok := desiredUIDs[existing.UID]; ok {
 			continue
 		}
 
@@ -135,7 +156,7 @@ func changedFields(existing *grafana.Datasource, desired *detection.DetectedData
 	if normalizeURL(existing.URL) != normalizeURL(desired.URL) {
 		changes = append(changes, "url")
 	}
-	if existing.Access != "proxy" {
+	if existing.Access != accessProxy {
 		changes = append(changes, "access")
 	}
 	if !jsonDataMatches(existing.JSONData, desired.JSONData) {
@@ -153,8 +174,8 @@ func normalizeURL(url string) string {
 
 // secureJSONFieldsMatch checks that all keys in desired secureJSONData are present
 // in Grafana's secureJsonFields. When secureJsonFields is empty (list API doesn't
-// return them), the check is skipped to avoid spurious updates.
-func secureJSONFieldsMatch(existingFields map[string]any, desiredData map[string]any) bool {
+// return them), the check is skipped to avoid spurious updates every cycle.
+func secureJSONFieldsMatch(existingFields map[string]bool, desiredData map[string]any) bool {
 	if desiredData == nil {
 		return true
 	}
@@ -162,7 +183,7 @@ func secureJSONFieldsMatch(existingFields map[string]any, desiredData map[string
 		return true
 	}
 	for k := range desiredData {
-		if existingFields[k] != true {
+		if !existingFields[k] {
 			return false
 		}
 	}
@@ -170,7 +191,7 @@ func secureJSONFieldsMatch(existingFields map[string]any, desiredData map[string
 }
 
 // jsonDataMatches checks that all keys in desired exist in existing with the same value.
-// Extra keys in existing (added by Grafana) are ignored.
+// Extra keys in existing (added by Grafana) are ignored to prevent spurious updates.
 func jsonDataMatches(existing, desired map[string]any) bool {
 	for k, dv := range desired {
 		ev, ok := existing[k]
@@ -184,13 +205,36 @@ func jsonDataMatches(existing, desired map[string]any) bool {
 	return true
 }
 
-// valuesEqual compares two JSON-decoded values, handling json.Number vs float64.
+// valuesEqual compares two JSON-decoded values. It handles the common type mismatch
+// where Go literals are int but JSON decode produces float64.
 func valuesEqual(a, b any) bool {
-	// Normalize both to string for comparison when dealing with JSON number types.
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+	if a == b {
+		return true
+	}
+	// Handle numeric type mismatches (int vs float64 from JSON decode).
+	if af, aOk := toFloat64(a); aOk {
+		if bf, bOk := toFloat64(b); bOk {
+			return af == bf
+		}
+	}
+	return reflect.DeepEqual(a, b)
 }
 
-func dedupDesired(desired []detection.DetectedDatasource) []detection.DetectedDatasource {
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
+}
+
+// deduplicateDesired keeps the first occurrence of each UID.
+func deduplicateDesired(desired []detection.DetectedDatasource) []detection.DetectedDatasource {
 	seen := make(map[string]int) // uid -> index in result
 	result := make([]detection.DetectedDatasource, 0, len(desired))
 	for _, ds := range desired {

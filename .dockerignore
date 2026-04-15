@@ -3,3 +3,10 @@
 *.md
 tasks/
 .claude/
+.gitignore
+.dockerignore
+Dockerfile
+renovate.json
+LICENSE
+*.test
+*.out
