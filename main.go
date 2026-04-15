@@ -72,7 +72,9 @@ loop:
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	_ = healthServer.Shutdown(shutdownCtx)
+	if err := healthServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("health server shutdown failed", "error", err)
+	}
 
 	slog.Info("shutdown complete")
 }
@@ -140,9 +142,7 @@ func runSync(ctx context.Context, appsFile, kubeClustersFile string, grafanaClie
 func newHealthServer() (*http.Server, net.Listener) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Length", "2")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
+		_, _ = fmt.Fprint(w, "ok")
 	})
 
 	ln, err := net.Listen("tcp", healthAddr)

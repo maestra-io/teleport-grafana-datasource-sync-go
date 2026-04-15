@@ -45,7 +45,7 @@ jobs:
           tags: local/scan:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - uses: aquasecurity/trivy-action@master
+      - uses: aquasecurity/trivy-action@0.33.0
         with:
           image-ref: local/scan:ci
           format: table

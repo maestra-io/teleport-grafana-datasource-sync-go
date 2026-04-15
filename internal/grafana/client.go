@@ -93,7 +93,7 @@ func (c *Client) ListManagedDatasources(ctx context.Context) ([]Datasource, erro
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("list datasources failed: %d %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("list datasources failed: %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var all []Datasource
@@ -147,9 +147,9 @@ func (c *Client) CreateDatasource(ctx context.Context, req *DatasourceRequest) e
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode == http.StatusConflict {
-		return fmt.Errorf("create datasource %q (uid=%q): already exists: %s", req.Name, req.UID, string(respBody))
+		return fmt.Errorf("create datasource %q (uid=%q): already exists: %s", req.Name, req.UID, strings.TrimSpace(string(respBody)))
 	}
-	return fmt.Errorf("create datasource %q failed: %d %s", req.Name, resp.StatusCode, string(respBody))
+	return fmt.Errorf("create datasource %q failed: %d %s", req.Name, resp.StatusCode, strings.TrimSpace(string(respBody)))
 }
 
 // UpdateDatasource updates an existing datasource by UID.
@@ -183,7 +183,7 @@ func (c *Client) UpdateDatasource(ctx context.Context, req *DatasourceRequest) e
 	}
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	return fmt.Errorf("update datasource %q failed: %d %s", req.Name, resp.StatusCode, string(respBody))
+	return fmt.Errorf("update datasource %q failed: %d %s", req.Name, resp.StatusCode, strings.TrimSpace(string(respBody)))
 }
 
 // DeleteDatasource deletes a datasource by UID. A 404 is treated as success.
@@ -216,5 +216,5 @@ func (c *Client) DeleteDatasource(ctx context.Context, uid string) error {
 	}
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	return fmt.Errorf("delete datasource uid=%q failed: %d %s", uid, resp.StatusCode, string(respBody))
+	return fmt.Errorf("delete datasource uid=%q failed: %d %s", uid, resp.StatusCode, strings.TrimSpace(string(respBody)))
 }

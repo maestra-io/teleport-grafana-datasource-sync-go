@@ -86,7 +86,7 @@ spec:
 ## Building
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o teleport-grafana-datasource-sync .
+CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o teleport-grafana-datasource-sync .
 docker build -t teleport-grafana-datasource-sync .
 ```
 

@@ -144,7 +144,7 @@ jobs:
         run: |
           docker build . --tag "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
 
-      - uses: aquasecurity/trivy-action@master
+      - uses: aquasecurity/trivy-action@0.33.0
         with:
           image-ref: "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
           format: table
@@ -182,4 +182,4 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          body: ${{ steps.notes.outputs.body }}
+          body: "${{ steps.notes.outputs.body }}"
