@@ -5,7 +5,9 @@ package teleport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"sort"
@@ -68,8 +70,18 @@ func ListApps(ctx context.Context, appsFile string) ([]App, error) {
 // Returns nil if the file is missing, empty, or unparseable.
 func ListKubeClusters(kubeClustersFile string) []string {
 	data, err := os.ReadFile(kubeClustersFile)
-	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
-		slog.Info("kube clusters file not ready, Loki tenant discovery skipped",
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			slog.Info("kube clusters file not found, Loki tenant discovery skipped",
+				"path", kubeClustersFile)
+		} else {
+			slog.Warn("failed to read kube clusters file, Loki tenant discovery skipped",
+				"path", kubeClustersFile, "error", err)
+		}
+		return nil
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		slog.Info("kube clusters file empty, Loki tenant discovery skipped",
 			"path", kubeClustersFile)
 		return nil
 	}

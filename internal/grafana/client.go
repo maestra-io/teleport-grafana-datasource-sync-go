@@ -92,7 +92,7 @@ func (c *Client) ListManagedDatasources(ctx context.Context) ([]Datasource, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("list datasources failed: %d %s", resp.StatusCode, string(body))
 	}
 
@@ -145,7 +145,7 @@ func (c *Client) CreateDatasource(ctx context.Context, req *DatasourceRequest) e
 		return nil
 	}
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode == http.StatusConflict {
 		return fmt.Errorf("create datasource %q (uid=%q): already exists: %s", req.Name, req.UID, string(respBody))
 	}
@@ -182,7 +182,7 @@ func (c *Client) UpdateDatasource(ctx context.Context, req *DatasourceRequest) e
 		return nil
 	}
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	return fmt.Errorf("update datasource %q failed: %d %s", req.Name, resp.StatusCode, string(respBody))
 }
 
@@ -215,6 +215,6 @@ func (c *Client) DeleteDatasource(ctx context.Context, uid string) error {
 		return nil
 	}
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	return fmt.Errorf("delete datasource uid=%q failed: %d %s", uid, resp.StatusCode, string(respBody))
 }

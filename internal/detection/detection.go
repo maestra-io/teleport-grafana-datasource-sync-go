@@ -198,7 +198,7 @@ func makeUID(name string) string {
 	// UIDPrefix + truncated name + "-" + 8-char hash = grafanaUIDMaxLen
 	budget := grafanaUIDMaxLen - len(grafana.UIDPrefix) - 1 - 8
 	// budget is always < len(name) here: we only reach this path when
-	// len(name) > grafanaUIDMaxLen - len(UIDPrefix), so budget (28) < len(name).
+	// len(name) > grafanaUIDMaxLen - len(UIDPrefix), so budget < len(name).
 	return grafana.UIDPrefix + name[:budget] + "-" + suffix[8:]
 }
 

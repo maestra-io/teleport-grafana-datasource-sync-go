@@ -156,7 +156,11 @@ func TestIgnoredApps(t *testing.T) {
 		"",
 	}
 	for _, name := range ignored {
-		t.Run(name, func(t *testing.T) {
+		testName := name
+		if testName == "" {
+			testName = "empty_string"
+		}
+		t.Run(testName, func(t *testing.T) {
 			_, ok := Detect(app(name))
 			if ok {
 				t.Fatalf("expected app %q to be ignored", name)

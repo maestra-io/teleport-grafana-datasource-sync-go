@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -42,7 +43,7 @@ func main() {
 	// Start health endpoint early so K8s probes work during startup.
 	healthServer, healthLn := newHealthServer()
 	go func() {
-		if err := healthServer.Serve(healthLn); err != nil && err != http.ErrServerClosed {
+		if err := healthServer.Serve(healthLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("health server error", "error", err)
 		}
 	}()
