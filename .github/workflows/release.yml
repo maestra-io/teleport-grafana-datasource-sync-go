@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+env:
+  IMAGE_NAME: teleport-grafana-datasource-sync
+  TELEPORT_FQDN: teleport.maestra.io:443
+  TELEPORT_TOKEN: image-push-github-actions-teleport-grafana-datasource-sync
+  ECR_REGISTRY: 515260921971.dkr.ecr.eu-central-1.amazonaws.com
+  AWS_ROLE_ARN: "arn:aws:iam::515260921971:role/teleport-image-push"
+  AWS_REGION: eu-central-1
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          test -z "$(goimports -l .)"
+      - run: go test -race -count=1 ./...
+
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          EXISTING=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ -n "$EXISTING" ]; then
+            NEXT="$EXISTING"
+            echo "Reusing existing tag: $NEXT"
+          else
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            if [ -z "$LATEST" ]; then
+              NEXT="v0.1.0"
+            else
+              VERSION="${LATEST#v}"
+              MAJOR=$(echo "$VERSION" | cut -d. -f1)
+              MINOR=$(echo "$VERSION" | cut -d. -f2)
+              PATCH=$(echo "$VERSION" | cut -d. -f3)
+              NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            fi
+            echo "New version: $NEXT"
+          fi
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "version=${NEXT#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create git tag
+        run: |
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.tag }} already exists, skipping"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+            git push origin "${{ steps.version.outputs.tag }}"
+          fi
+
+      - name: Get Teleport version
+        id: tp-version
+        run: |
+          VERSION=$(curl -sf "https://${{ env.TELEPORT_FQDN }}/webapi/find" | jq -r '.auto_update.tools_version // .server_version')
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "Failed to resolve Teleport version from /webapi/find" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Teleport binaries
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.tool_cache }}/teleport
+          key: teleport-${{ steps.tp-version.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install Teleport
+        uses: teleport-actions/setup@v1
+        with:
+          version: ${{ steps.tp-version.outputs.version }}
+          proxy: ${{ env.TELEPORT_FQDN }}
+
+      - name: ECR login via Teleport Workload Identity
+        run: |
+          cat > /tmp/tbot.yaml << EOF
+          version: v2
+          proxy_server: ${{ env.TELEPORT_FQDN }}
+          onboarding:
+            join_method: github
+            token: ${{ env.TELEPORT_TOKEN }}
+          oneshot: true
+          storage:
+            type: memory
+          services:
+            - type: workload-identity-jwt
+              destination:
+                type: directory
+                path: /tmp/tbot-output
+              selector:
+                name: image-push
+              audiences: ["sts.amazonaws.com"]
+          EOF
+
+          mkdir -p /tmp/tbot-output
+          tbot start -c /tmp/tbot.yaml
+          test -s /tmp/tbot-output/jwt_svid
+          export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/tbot-output/jwt_svid
+          export AWS_ROLE_ARN="${{ env.AWS_ROLE_ARN }}"
+          export AWS_DEFAULT_REGION=${{ env.AWS_REGION }}
+
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            docker login ${{ env.ECR_REGISTRY }} --username AWS --password-stdin
+
+          aws ecr describe-repositories --repository-names ${{ env.IMAGE_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null || \
+            aws ecr create-repository --repository-name ${{ env.IMAGE_NAME }} --region ${{ env.AWS_REGION }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          docker build . --rm --tag "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
+      - name: Push to AWS ECR
+        run: |
+          docker push "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname --list 'v*' | head -2 | tail -1)
+          TAG="${{ steps.version.outputs.tag }}"
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$TAG" ]; then
+            echo "body=Initial release." >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "body<<EOF"
+              echo "## Docker image"
+              echo ""
+              echo '```'
+              echo "515260921971.dkr.ecr.eu-central-1.amazonaws.com/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+              echo '```'
+              echo ""
+              echo "## Changes since ${PREV_TAG}"
+              echo ""
+              git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD" -- . ':!*.lock'
+              echo ""
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          body: ${{ steps.notes.outputs.body }}

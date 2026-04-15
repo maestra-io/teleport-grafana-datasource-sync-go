@@ -1,0 +1,399 @@
+package detection
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/maestra-io/teleport-grafana-datasource-sync-go/internal/teleport"
+)
+
+func app(name string) teleport.App {
+	return teleport.App{Name: name}
+}
+
+// --- Thanos Query ---
+
+func TestThanosQueryDetectedAndStripped(t *testing.T) {
+	ds, ok := Detect(app("eu-aws-kube-infra-production-common-thanos-query"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertEqual(t, "name", ds.Name, "eu-aws-kube-infra-production-common")
+	assertEqual(t, "uid", ds.UID, "tp-eu-aws-kube-infra-production-common")
+	assertDSType(t, ds.DSType, Prometheus)
+	assertEqual(t, "url", ds.URL, "http://eu-aws-kube-infra-production-common-thanos-query")
+	assertEqual(t, "teleport_app_name", ds.TeleportAppName, "eu-aws-kube-infra-production-common-thanos-query")
+}
+
+// --- VMAuth ---
+
+func TestVmauthDetectedAndStripped(t *testing.T) {
+	ds, ok := Detect(app("us-omicron-lw-kube-common-vmauth"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertEqual(t, "name", ds.Name, "us-omicron-lw-kube-common")
+	assertEqual(t, "uid", ds.UID, "tp-us-omicron-lw-kube-common")
+	assertDSType(t, ds.DSType, VictoriaMetricsMetrics)
+	assertEqual(t, "teleport_app_name", ds.TeleportAppName, "us-omicron-lw-kube-common-vmauth")
+}
+
+// --- VictoriaLogs ---
+
+func TestVictorialogsDetectedAsIs(t *testing.T) {
+	ds, ok := Detect(app("victorialogs-siem"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertEqual(t, "name", ds.Name, "victorialogs-siem")
+	assertEqual(t, "uid", ds.UID, "tp-victorialogs-siem")
+	assertDSType(t, ds.DSType, VictoriaMetricsLogs)
+	assertEqual(t, "teleport_app_name", ds.TeleportAppName, "victorialogs-siem")
+}
+
+func TestVictorialogsNotMistakenForThanos(t *testing.T) {
+	ds, ok := Detect(app("victorialogs-eu-thanos-query"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertDSType(t, ds.DSType, VictoriaMetricsLogs)
+	assertEqual(t, "name", ds.Name, "victorialogs-eu-thanos-query")
+}
+
+func TestVictorialogsNotMistakenForVmauth(t *testing.T) {
+	ds, ok := Detect(app("victorialogs-foo-vmauth"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertDSType(t, ds.DSType, VictoriaMetricsLogs)
+}
+
+// --- Loki ---
+
+func TestLokiDetectedAsIs(t *testing.T) {
+	ds, ok := Detect(app("eu-omega-loki-distributed"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertEqual(t, "name", ds.Name, "eu-omega-loki-distributed")
+	assertEqual(t, "uid", ds.UID, "tp-eu-omega-loki-distributed")
+	assertDSType(t, ds.DSType, Loki)
+	assertEqual(t, "teleport_app_name", ds.TeleportAppName, "eu-omega-loki-distributed")
+}
+
+func TestLokiExactName(t *testing.T) {
+	ds, ok := Detect(app("loki"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertDSType(t, ds.DSType, Loki)
+}
+
+func TestLokiPrefix(t *testing.T) {
+	ds, ok := Detect(app("loki-gateway"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertDSType(t, ds.DSType, Loki)
+}
+
+func TestLokiSuffix(t *testing.T) {
+	ds, ok := Detect(app("eu-omega-loki"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertDSType(t, ds.DSType, Loki)
+}
+
+func TestLokiSubstringNoBoundaryRejected(t *testing.T) {
+	_, ok := Detect(app("lokibridge"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestLokiTakesPriorityOverThanosSuffix(t *testing.T) {
+	ds, ok := Detect(app("loki-region-thanos-query"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertDSType(t, ds.DSType, Loki)
+}
+
+func TestLokiTakesPriorityOverVmauthSuffix(t *testing.T) {
+	ds, ok := Detect(app("loki-foo-vmauth"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertDSType(t, ds.DSType, Loki)
+}
+
+func TestLokiSuffixSubstringNoBoundaryRejected(t *testing.T) {
+	_, ok := Detect(app("havaloki"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+// --- Ignored apps ---
+
+func TestPrometheusRawIgnored(t *testing.T) {
+	_, ok := Detect(app("eu-aws-kube-infra-production-common-prometheus"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestThanosCompactorIgnored(t *testing.T) {
+	_, ok := Detect(app("eu-aws-kube-infra-production-common-thanos-compactor"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestBareThanosQuerySuffixIgnored(t *testing.T) {
+	_, ok := Detect(app("-thanos-query"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestBareVmauthSuffixIgnored(t *testing.T) {
+	_, ok := Detect(app("-vmauth"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestVmagentIgnored(t *testing.T) {
+	_, ok := Detect(app("vmagent-vmks-victoria-metrics-us-omicron-lw-kube-common"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestVmalertIgnored(t *testing.T) {
+	_, ok := Detect(app("vmalert-vmks-victoria-metrics-us-omicron-lw-kube-common"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestRandomServiceIgnored(t *testing.T) {
+	_, ok := Detect(app("auth-jwt-omega"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+// --- URL handling ---
+
+func TestURLIsHTTPAppName(t *testing.T) {
+	ds, ok := Detect(app("victorialogs-test"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertEqual(t, "url", ds.URL, "http://victorialogs-test")
+}
+
+// --- UID validation ---
+
+func TestUIDShortNameExact(t *testing.T) {
+	// "tp-" (3) + 37 chars = 40 — fits exactly
+	longName := "victorialogs-" + strings.Repeat("a", 24)
+	if len(longName) != 37 {
+		t.Fatalf("expected len 37, got %d", len(longName))
+	}
+	ds, ok := Detect(app(longName))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertEqual(t, "uid", ds.UID, "tp-"+longName)
+	if len(ds.UID) != 40 {
+		t.Fatalf("expected UID len 40, got %d", len(ds.UID))
+	}
+}
+
+func TestUIDLongNameGetsTruncatedWithHash(t *testing.T) {
+	longName := "victorialogs-" + strings.Repeat("a", 25)
+	if len(longName) != 38 {
+		t.Fatalf("expected len 38, got %d", len(longName))
+	}
+	ds, ok := Detect(app(longName))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	if len(ds.UID) != 40 {
+		t.Fatalf("expected UID len 40, got %d", len(ds.UID))
+	}
+	if !strings.HasPrefix(ds.UID, "tp-") {
+		t.Fatalf("expected UID to start with tp-, got %s", ds.UID)
+	}
+	// UID is deterministic
+	ds2, _ := Detect(app(longName))
+	assertEqual(t, "uid deterministic", ds.UID, ds2.UID)
+}
+
+func TestUIDLongLeasewebNameAccepted(t *testing.T) {
+	ds, ok := Detect(app("eu-leaseweb-kube-cdp-common-production-01-cdp-thanos-query"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertEqual(t, "name", ds.Name, "eu-leaseweb-kube-cdp-common-production-01-cdp")
+	if len(ds.UID) > grafanaUIDMaxLen {
+		t.Fatalf("UID too long: %d > %d", len(ds.UID), grafanaUIDMaxLen)
+	}
+}
+
+func TestUIDInvalidCharsAtSignRejected(t *testing.T) {
+	_, ok := Detect(app("victorialogs-foo@bar"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestUIDUnderscoreRejected(t *testing.T) {
+	_, ok := Detect(app("victorialogs-foo_bar"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestUIDDotRejected(t *testing.T) {
+	_, ok := Detect(app("victorialogs-foo.bar"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestUIDWithSpaceRejected(t *testing.T) {
+	_, ok := Detect(app("victorialogs-foo bar"))
+	if ok {
+		t.Fatal("expected rejection")
+	}
+}
+
+// --- json_data per type ---
+
+func TestDefaultJSONDataPrometheus(t *testing.T) {
+	data := Prometheus.DefaultJSONData()
+	assertEqual(t, "httpMethod", fmt.Sprint(data["httpMethod"]), "POST")
+	assertEqual(t, "timeInterval", fmt.Sprint(data["timeInterval"]), "15s")
+}
+
+func TestDefaultJSONDataLoki(t *testing.T) {
+	data := Loki.DefaultJSONData()
+	assertEqual(t, "maxLines", fmt.Sprint(data["maxLines"]), "1000")
+}
+
+func TestDefaultJSONDataVMMetricsEmpty(t *testing.T) {
+	data := VictoriaMetricsMetrics.DefaultJSONData()
+	if len(data) != 0 {
+		t.Fatalf("expected empty map, got %v", data)
+	}
+}
+
+func TestDefaultJSONDataVMLogsEmpty(t *testing.T) {
+	data := VictoriaMetricsLogs.DefaultJSONData()
+	if len(data) != 0 {
+		t.Fatalf("expected empty map, got %v", data)
+	}
+}
+
+// --- as_grafana_type ---
+
+func TestGrafanaTypeStrings(t *testing.T) {
+	assertEqual(t, "prometheus", Prometheus.GrafanaType(), "prometheus")
+	assertEqual(t, "vm-metrics", VictoriaMetricsMetrics.GrafanaType(), "victoriametrics-metrics-datasource")
+	assertEqual(t, "vm-logs", VictoriaMetricsLogs.GrafanaType(), "victoriametrics-logs-datasource")
+	assertEqual(t, "loki", Loki.GrafanaType(), "loki")
+}
+
+// --- expand_loki_tenants ---
+
+func TestExpandLokiNoClustersPassthrough(t *testing.T) {
+	ds, ok := Detect(app("eu-omega-loki-distributed"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	result := ExpandLokiTenants([]DetectedDatasource{ds}, nil)
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	assertEqual(t, "name", result[0].Name, "eu-omega-loki-distributed")
+}
+
+func TestExpandLokiCreatesPerTenantDatasources(t *testing.T) {
+	ds, ok := Detect(app("eu-omega-loki-distributed"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	clusters := []string{"eu-aws-kube-infra-production", "eu-aws-kube-common-production"}
+	result := ExpandLokiTenants([]DetectedDatasource{ds}, clusters)
+	if len(result) != 2 {
+		t.Fatalf("expected 2, got %d", len(result))
+	}
+	assertEqual(t, "name[0]", result[0].Name, "eu-aws-kube-infra-production-loki")
+	assertEqual(t, "uid[0]", result[0].UID, "tp-eu-aws-kube-infra-production-loki")
+	assertDSType(t, result[0].DSType, Loki)
+	assertEqual(t, "url[0]", result[0].URL, "http://eu-omega-loki-distributed")
+	assertEqual(t, "httpHeaderName1", fmt.Sprint(result[0].JSONData["httpHeaderName1"]), "X-Scope-OrgID")
+	assertEqual(t, "httpHeaderValue1", fmt.Sprint(result[0].SecureJSONData["httpHeaderValue1"]), "eu-aws-kube-infra-production")
+	assertEqual(t, "name[1]", result[1].Name, "eu-aws-kube-common-production-loki")
+}
+
+func TestExpandLokiPreservesNonLoki(t *testing.T) {
+	prom, ok := Detect(app("eu-aws-kube-infra-production-common-thanos-query"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	loki, ok := Detect(app("eu-omega-loki-distributed"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	clusters := []string{"tenant-a"}
+	result := ExpandLokiTenants([]DetectedDatasource{prom, loki}, clusters)
+	if len(result) != 2 {
+		t.Fatalf("expected 2, got %d", len(result))
+	}
+	assertDSType(t, result[0].DSType, Prometheus)
+	assertDSType(t, result[1].DSType, Loki)
+	assertEqual(t, "name[1]", result[1].Name, "tenant-a-loki")
+}
+
+func TestExpandLokiTenantDSHasCorrectJSONData(t *testing.T) {
+	ds, ok := Detect(app("eu-omega-loki-distributed"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	clusters := []string{"my-cluster"}
+	result := ExpandLokiTenants([]DetectedDatasource{ds}, clusters)
+	assertEqual(t, "maxLines", fmt.Sprint(result[0].JSONData["maxLines"]), "1000")
+	assertEqual(t, "httpHeaderName1", fmt.Sprint(result[0].JSONData["httpHeaderName1"]), "X-Scope-OrgID")
+	if result[0].SecureJSONData == nil {
+		t.Fatal("expected non-nil SecureJSONData")
+	}
+}
+
+// --- MakeUID exported for sync tests ---
+
+func MakeUIDForTest(name string) string {
+	return makeUID(name)
+}
+
+// helpers
+
+func assertEqual(t *testing.T, field, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s: got %q, want %q", field, got, want)
+	}
+}
+
+func assertDSType(t *testing.T, got, want DatasourceType) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("ds_type: got %s, want %s", got.GrafanaType(), want.GrafanaType())
+	}
+}
