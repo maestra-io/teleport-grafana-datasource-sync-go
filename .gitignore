@@ -1,4 +1,5 @@
-teleport-grafana-datasource-sync
+teleport-grafana-datasource-sync-go
+.DS_Store
 *.test
 *.out
 coverage.*

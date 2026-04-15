@@ -4,6 +4,7 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -78,7 +79,7 @@ func Reconcile(ctx context.Context, client *grafana.Client, desired []detection.
 				)
 				if !dryRun {
 					if err := client.UpdateDatasource(ctx, req); err != nil {
-						slog.Error("update failed", "name", ds.Name, "uid", ds.UID, "error", err)
+						slog.Error("failed to update datasource", "name", ds.Name, "uid", ds.UID, "error", err)
 						stats.Failed++
 						continue
 					}
@@ -97,7 +98,7 @@ func Reconcile(ctx context.Context, client *grafana.Client, desired []detection.
 			)
 			if !dryRun {
 				if err := client.CreateDatasource(ctx, req); err != nil {
-					slog.Error("create failed", "name", ds.Name, "uid", ds.UID, "error", err)
+					slog.Error("failed to create datasource", "name", ds.Name, "uid", ds.UID, "error", err)
 					stats.Failed++
 					continue
 				}
@@ -118,9 +119,10 @@ func Reconcile(ctx context.Context, client *grafana.Client, desired []detection.
 
 		// Don't delete Loki datasources when tenant discovery is unavailable.
 		if !lokiReady && existing.Type == "loki" {
-			slog.Info("preserving Loki datasource (tenant discovery unavailable)",
+			slog.Info("preserving Loki datasource",
 				"name", existing.Name,
 				"uid", existing.UID,
+				"reason", "tenant discovery unavailable",
 			)
 			stats.Unchanged++
 			continue
@@ -134,7 +136,7 @@ func Reconcile(ctx context.Context, client *grafana.Client, desired []detection.
 		)
 		if !dryRun {
 			if err := client.DeleteDatasource(ctx, existing.UID); err != nil {
-				slog.Error("delete failed", "uid", existing.UID, "error", err)
+				slog.Error("failed to delete datasource", "name", existing.Name, "uid", existing.UID, "error", err)
 				stats.Failed++
 				continue
 			}
@@ -228,6 +230,9 @@ func toFloat64(v any) (float64, bool) {
 		return float64(n), true
 	case int64:
 		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
 	default:
 		return 0, false
 	}

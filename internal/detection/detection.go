@@ -122,8 +122,8 @@ func Detect(app teleport.App) (DetectedDatasource, bool) {
 	uid := makeUID(dsName)
 
 	if !isValidUID(uid) {
-		slog.Warn("skipping app: UID contains invalid characters for Grafana",
-			"name", name, "uid", uid)
+		slog.Warn("skipping app with invalid UID characters",
+			"name", name, "uid", uid, "reason", "invalid characters for Grafana")
 		return DetectedDatasource{}, false
 	}
 
@@ -158,10 +158,13 @@ func ExpandLokiTenants(datasources []DetectedDatasource, kubeClusters []string) 
 			uid := makeUID(name)
 
 			if !isValidUID(uid) {
-				slog.Warn("skipping Loki tenant: UID contains invalid characters",
-					"tenant", tenant, "uid", uid)
+				slog.Warn("skipping Loki tenant with invalid UID characters",
+					"tenant", tenant, "uid", uid, "reason", "invalid characters for Grafana")
 				continue
 			}
+
+			jsonData := Loki.DefaultJSONData()
+			jsonData["httpHeaderName1"] = "X-Scope-OrgID"
 
 			result = append(result, DetectedDatasource{
 				Name:            name,
@@ -169,10 +172,7 @@ func ExpandLokiTenants(datasources []DetectedDatasource, kubeClusters []string) 
 				DSType:          Loki,
 				URL:             ds.URL,
 				TeleportAppName: ds.TeleportAppName,
-				JSONData: map[string]any{
-					"maxLines":        1000,
-					"httpHeaderName1": "X-Scope-OrgID",
-				},
+				JSONData:        jsonData,
 				SecureJSONData: map[string]any{
 					"httpHeaderValue1": tenant,
 				},
@@ -201,7 +201,7 @@ func makeUID(name string) string {
 	if end > len(name) {
 		end = len(name)
 	}
-	return grafana.UIDPrefix + name[:end] + "-" + suffix[:8]
+	return grafana.UIDPrefix + name[:end] + "-" + suffix[8:]
 }
 
 // isLokiApp returns true if the name matches "loki" at a word boundary:

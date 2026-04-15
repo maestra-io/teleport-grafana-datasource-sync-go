@@ -71,7 +71,7 @@ An HTTP health endpoint listens on `:8080` and responds with `200 ok` to all req
 
 ## Teleport role
 
-The bot needs read access to `app_server` and `kube_cluster` resources:
+The bot needs read access to `app_server` and `kube_server` resources:
 
 ```yaml
 spec:
@@ -79,7 +79,7 @@ spec:
     rules:
       - resources: [app_server]
         verbs: [list, read]
-      - resources: [kube_cluster]
+      - resources: [kube_server]
         verbs: [list, read]
 ```
 

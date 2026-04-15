@@ -23,27 +23,27 @@ type Config struct {
 func FromEnv() (*Config, error) {
 	grafanaURL := envOr("GRAFANA_URL", "http://grafana.grafana.svc:80")
 	if !strings.HasPrefix(grafanaURL, "http://") && !strings.HasPrefix(grafanaURL, "https://") {
-		return nil, fmt.Errorf("GRAFANA_URL must start with http:// or https://, got: %s", grafanaURL)
+		return nil, fmt.Errorf("invalid GRAFANA_URL: must start with http:// or https://, got: %s", grafanaURL)
 	}
 
 	apiKeyFile := envOr("GRAFANA_API_KEY_FILE", "/secrets/grafana-api-key")
 	if apiKeyFile == "" {
-		return nil, fmt.Errorf("GRAFANA_API_KEY_FILE must not be empty")
+		return nil, fmt.Errorf("GRAFANA_API_KEY_FILE is set but empty")
 	}
 
 	intervalStr := envOr("SYNC_INTERVAL_SECS", "30")
 	intervalSecs, err := strconv.Atoi(intervalStr)
 	if err != nil {
-		return nil, fmt.Errorf("SYNC_INTERVAL_SECS must be a positive integer: %w", err)
+		return nil, fmt.Errorf("invalid SYNC_INTERVAL_SECS: must be a positive integer: %w", err)
 	}
 	if intervalSecs <= 0 {
-		return nil, fmt.Errorf("SYNC_INTERVAL_SECS must be > 0")
+		return nil, fmt.Errorf("invalid SYNC_INTERVAL_SECS: must be > 0, got %d", intervalSecs)
 	}
 
 	dryRunStr := envOr("DRY_RUN", "false")
 	dryRun, err := strconv.ParseBool(dryRunStr)
 	if err != nil {
-		return nil, fmt.Errorf("DRY_RUN must be a boolean value: %w", err)
+		return nil, fmt.Errorf("invalid DRY_RUN: must be a boolean value: %w", err)
 	}
 
 	return &Config{
@@ -60,19 +60,19 @@ func ReadGrafanaAPIKey(path string) (string, error) {
 	if err == nil {
 		key := strings.TrimSpace(string(data))
 		if key == "" {
-			return "", fmt.Errorf("grafana API key is empty (from file %s)", path)
+			return "", fmt.Errorf("grafana API key is empty (from file %q)", path)
 		}
 		return key, nil
 	}
 
 	if !errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("failed to read API key from %s: %w", path, err)
+		return "", fmt.Errorf("failed to read API key from %q: %w", path, err)
 	}
 
 	// File not found — fall back to env var.
 	val, ok := os.LookupEnv("GRAFANA_API_KEY")
 	if !ok {
-		return "", fmt.Errorf("API key file %s not found and GRAFANA_API_KEY env var not set", path)
+		return "", fmt.Errorf("API key file %q not found and GRAFANA_API_KEY env var not set", path)
 	}
 
 	key := strings.TrimSpace(val)

@@ -50,7 +50,12 @@ type DatasourceRequest struct {
 // NewClient creates a Grafana API client. The API key is read fresh from
 // apiKeyFile on every request to support Vault/VSO rotation.
 func NewClient(baseURL, apiKeyFile string) *Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	var transport *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = dt.Clone()
+	} else {
+		transport = &http.Transport{}
+	}
 	transport.ResponseHeaderTimeout = 10 * time.Second
 
 	return &Client{
@@ -200,15 +205,16 @@ func (c *Client) DeleteDatasource(ctx context.Context, uid string) error {
 	}
 	defer resp.Body.Close()
 
-	_, _ = io.Copy(io.Discard, resp.Body)
-
 	if resp.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		slog.Debug("datasource already absent, skipping delete", "uid", uid)
 		return nil
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
 
-	return fmt.Errorf("delete datasource uid=%s failed: %d", uid, resp.StatusCode)
+	respBody, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("delete datasource uid=%s failed: %d %s", uid, resp.StatusCode, string(respBody))
 }

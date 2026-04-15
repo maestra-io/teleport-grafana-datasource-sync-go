@@ -61,15 +61,15 @@ func main() {
 	// Run first sync immediately at startup.
 	runSyncCycle(ctx, appsFile, kubeClustersFile, grafanaClient, cfg.DryRun)
 
+loop:
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Info("received shutdown signal")
+			break loop
 		case <-ticker.C:
 			runSyncCycle(ctx, appsFile, kubeClustersFile, grafanaClient, cfg.DryRun)
-			continue
 		}
-		break
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -103,7 +103,7 @@ func runSync(ctx context.Context, appsFile, kubeClustersFile string, grafanaClie
 		return nil, fmt.Errorf("listing apps: %w", err)
 	}
 
-	kubeClusters := teleport.ListKubeClusters(ctx, kubeClustersFile)
+	kubeClusters := teleport.ListKubeClusters(kubeClustersFile)
 
 	detected := make([]detection.DetectedDatasource, 0, len(apps))
 	for _, app := range apps {
@@ -158,6 +158,7 @@ func newHealthServer() (*http.Server, net.Listener) {
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  30 * time.Second,
 	}, ln
 }
 

@@ -400,3 +400,9 @@ func assertDSType(t *testing.T, got, want DatasourceType) {
 		t.Fatalf("ds_type: got %s, want %s", got.GrafanaType(), want.GrafanaType())
 	}
 }
+
+func TestGrafanaTypeUnknown(t *testing.T) {
+	if DatasourceType(99).GrafanaType() != "unknown" {
+		t.Fatal("expected unknown for out-of-range DatasourceType")
+	}
+}

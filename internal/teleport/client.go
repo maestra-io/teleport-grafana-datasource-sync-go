@@ -66,7 +66,7 @@ func ListApps(ctx context.Context, appsFile string) ([]App, error) {
 
 // ListKubeClusters reads kube cluster names from the JSON file.
 // Returns nil if the file is missing, empty, or unparseable.
-func ListKubeClusters(ctx context.Context, kubeClustersFile string) []string {
+func ListKubeClusters(kubeClustersFile string) []string {
 	data, err := os.ReadFile(kubeClustersFile)
 	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 		slog.Info("kube clusters file not ready, Loki tenant discovery skipped",
@@ -104,11 +104,12 @@ func waitForFile(ctx context.Context, path string) error {
 	const timeout = 120 * time.Second
 	const poll = 2 * time.Second
 
-	deadline := time.Now().Add(timeout)
+	startTime := time.Now()
+	deadline := startTime.Add(timeout)
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 
-	lastLog := time.Now()
+	lastLog := startTime
 
 	for {
 		info, err := os.Stat(path)
@@ -123,7 +124,7 @@ func waitForFile(ctx context.Context, path string) error {
 
 		if time.Since(lastLog) >= 10*time.Second {
 			slog.Info("waiting for tctl sidecar",
-				"elapsed", time.Since(deadline.Add(-timeout)).Truncate(time.Second),
+				"elapsed", time.Since(startTime).Truncate(time.Second),
 				"path", path,
 			)
 			lastLog = time.Now()
