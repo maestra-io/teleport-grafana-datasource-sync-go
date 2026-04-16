@@ -45,9 +45,13 @@ jobs:
           tags: local/scan:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - uses: aquasecurity/setup-trivy@v0.2.6
-        with:
-          version: v0.69.3
+      - name: Install Trivy
+        run: |
+          TRIVY_VERSION=0.69.3
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar xz -C "$HOME/.local/bin" trivy
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: aquasecurity/trivy-action@master
         with:
           image-ref: local/scan:ci
