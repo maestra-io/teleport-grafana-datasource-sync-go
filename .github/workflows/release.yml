@@ -144,7 +144,7 @@ jobs:
         run: |
           docker build . --tag "${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
 
-      - uses: aquasecurity/setup-trivy@v0.2.3
+      - uses: aquasecurity/setup-trivy@v0.2.6
         with:
           version: v0.69.3
       - uses: aquasecurity/trivy-action@master
