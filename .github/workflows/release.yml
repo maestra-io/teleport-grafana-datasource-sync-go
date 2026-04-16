@@ -7,7 +7,7 @@ on:
 permissions: {}
 
 env:
-  IMAGE_NAME: teleport-grafana-datasource-sync
+  IMAGE_NAME: teleport-grafana-datasource-sync-go
   TELEPORT_FQDN: teleport.maestra.io:443
   TELEPORT_TOKEN: image-push-github-actions-teleport-grafana-datasource-sync-go
   ECR_REGISTRY: 515260921971.dkr.ecr.eu-central-1.amazonaws.com
