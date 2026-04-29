@@ -84,7 +84,11 @@ type DetectedDatasource struct {
 //  1. victorialogs- prefix → VictoriaMetricsLogs
 //  2. loki word-boundary match → Loki
 //  3. -thanos-query suffix → Prometheus (suffix stripped from name)
-//  4. -vmauth suffix → VictoriaMetricsMetrics (suffix stripped from name)
+//  4. -vmauth suffix → Prometheus (suffix stripped from name) — vmauth speaks
+//     the Prometheus HTTP API, and team dashboards/queries are written against
+//     the Prometheus plugin, so we provision it as a `prometheus` datasource
+//     rather than the VM-specific plugin (which is still supported in the type
+//     enum but no rule maps to it currently).
 //
 // Returns the detected datasource and true, or zero value and false if no rule matches.
 func Detect(app teleport.App) (DetectedDatasource, bool) {
@@ -112,7 +116,7 @@ func Detect(app teleport.App) (DetectedDatasource, bool) {
 		if stripped == "" {
 			return DetectedDatasource{}, false
 		}
-		dsType = VictoriaMetricsMetrics
+		dsType = Prometheus
 		dsName = stripped
 	default:
 		return DetectedDatasource{}, false
