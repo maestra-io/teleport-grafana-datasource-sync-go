@@ -25,7 +25,7 @@ Apps are matched by name pattern and mapped to Grafana datasource types. Rules a
 | 1 | `victorialogs-*` prefix | `victoriametrics-logs-datasource` | Keep as-is | `{}` |
 | 2 | `loki` exact, `loki-*` prefix, `*-loki` suffix, `*-loki-*` infix | `loki` | Expand per tenant (see below) | `{"maxLines": 1000}` |
 | 3 | `*-thanos-query` suffix | `prometheus` | Strip `-thanos-query` suffix | `{"httpMethod": "POST", "timeInterval": "15s"}` |
-| 4 | `*-vmauth` suffix | `victoriametrics-metrics-datasource` | Strip `-vmauth` suffix | `{}` |
+| 4 | `*-vmauth` suffix | `prometheus` | Strip `-vmauth` suffix | `{"httpMethod": "POST", "timeInterval": "15s"}` |
 
 ## Multi-tenant Loki
 

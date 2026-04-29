@@ -28,14 +28,14 @@ func TestThanosQueryDetectedAndStripped(t *testing.T) {
 
 // --- VMAuth ---
 
-func TestVmauthDetectedAndStripped(t *testing.T) {
+func TestVmauthDetectedAsPrometheusAndStripped(t *testing.T) {
 	ds, ok := Detect(app("us-omicron-lw-kube-common-vmauth"))
 	if !ok {
 		t.Fatal("expected detection")
 	}
 	assertEqual(t, "name", ds.Name, "us-omicron-lw-kube-common")
 	assertEqual(t, "uid", ds.UID, "tp-us-omicron-lw-kube-common")
-	assertDSType(t, ds.DSType, VictoriaMetricsMetrics)
+	assertDSType(t, ds.DSType, Prometheus)
 	assertEqual(t, "teleport_app_name", ds.TeleportAppName, "us-omicron-lw-kube-common-vmauth")
 	assertEqual(t, "url", ds.URL, "http://us-omicron-lw-kube-common-vmauth")
 }
