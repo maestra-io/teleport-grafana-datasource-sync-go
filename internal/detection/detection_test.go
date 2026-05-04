@@ -14,16 +14,31 @@ func app(name string) teleport.App {
 
 // --- Thanos Query ---
 
-func TestThanosQueryDetectedAndStripped(t *testing.T) {
+func TestThanosQueryDetectedStrippedAndLegacyPrefixed(t *testing.T) {
 	ds, ok := Detect(app("eu-aws-kube-infra-production-common-thanos-query"))
 	if !ok {
 		t.Fatal("expected detection")
 	}
-	assertEqual(t, "name", ds.Name, "eu-aws-kube-infra-production-common")
+	// Display name carries the legacy_ prefix so dashboards can filter Thanos
+	// datasources out of variable dropdowns during the VM migration.
+	assertEqual(t, "name", ds.Name, "legacy_eu-aws-kube-infra-production-common")
+	// UID is derived from the un-prefixed name so existing panel references stay valid.
 	assertEqual(t, "uid", ds.UID, "tp-eu-aws-kube-infra-production-common")
 	assertDSType(t, ds.DSType, Prometheus)
 	assertEqual(t, "url", ds.URL, "http://eu-aws-kube-infra-production-common-thanos-query")
 	assertEqual(t, "teleport_app_name", ds.TeleportAppName, "eu-aws-kube-infra-production-common-thanos-query")
+}
+
+// VMAuth-backed prometheus datasources are part of the VM stack we migrate *to*
+// and must NOT receive the legacy_ prefix.
+func TestVmauthNotLegacyPrefixed(t *testing.T) {
+	ds, ok := Detect(app("vmcluster-foo-vmauth"))
+	if !ok {
+		t.Fatal("expected detection")
+	}
+	assertEqual(t, "name", ds.Name, "vmcluster-foo")
+	assertEqual(t, "uid", ds.UID, "tp-vmcluster-foo")
+	assertDSType(t, ds.DSType, Prometheus)
 }
 
 // --- VMAuth ---
@@ -235,7 +250,7 @@ func TestUIDLongLeasewebNameAccepted(t *testing.T) {
 	if !ok {
 		t.Fatal("expected detection")
 	}
-	assertEqual(t, "name", ds.Name, "eu-leaseweb-kube-cdp-common-production-01-cdp")
+	assertEqual(t, "name", ds.Name, "legacy_eu-leaseweb-kube-cdp-common-production-01-cdp")
 	if len(ds.UID) > grafanaUIDMaxLen {
 		t.Fatalf("UID too long: %d > %d", len(ds.UID), grafanaUIDMaxLen)
 	}

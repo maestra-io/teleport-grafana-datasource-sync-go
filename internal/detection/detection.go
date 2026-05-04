@@ -78,12 +78,18 @@ type DetectedDatasource struct {
 	SecureJSONData  map[string]any // nil means no secure data
 }
 
+// LegacyThanosPrefix is prepended to display names of Thanos-backed Prometheus
+// datasources so dashboards can filter them out of variable dropdowns during the
+// migration to VictoriaMetrics. The UID is derived from the un-prefixed name to
+// keep existing panel references stable across the rename.
+const LegacyThanosPrefix = "legacy_"
+
 // Detect applies detection rules to a Teleport app.
 //
 // Rule priority (highest first):
 //  1. victorialogs- prefix → VictoriaMetricsLogs
 //  2. loki word-boundary match → Loki
-//  3. -thanos-query suffix → Prometheus (suffix stripped from name)
+//  3. -thanos-query suffix → Prometheus (suffix stripped, display name prefixed with legacy_)
 //  4. -vmauth suffix → Prometheus (suffix stripped from name) — vmauth speaks
 //     the Prometheus HTTP API, and team dashboards/queries are written against
 //     the Prometheus plugin, so we provision it as a `prometheus` datasource
@@ -96,21 +102,25 @@ func Detect(app teleport.App) (DetectedDatasource, bool) {
 
 	var dsType DatasourceType
 	var dsName string
+	var uidSeed string
 
 	switch {
 	case strings.HasPrefix(name, "victorialogs-"):
 		dsType = VictoriaMetricsLogs
 		dsName = name
+		uidSeed = name
 	case isLokiApp(name):
 		dsType = Loki
 		dsName = name
+		uidSeed = name
 	case strings.HasSuffix(name, "-thanos-query"):
 		stripped := strings.TrimSuffix(name, "-thanos-query")
 		if stripped == "" {
 			return DetectedDatasource{}, false
 		}
 		dsType = Prometheus
-		dsName = stripped
+		dsName = LegacyThanosPrefix + stripped
+		uidSeed = stripped
 	case strings.HasSuffix(name, "-vmauth"):
 		stripped := strings.TrimSuffix(name, "-vmauth")
 		if stripped == "" {
@@ -118,12 +128,13 @@ func Detect(app teleport.App) (DetectedDatasource, bool) {
 		}
 		dsType = Prometheus
 		dsName = stripped
+		uidSeed = stripped
 	default:
 		return DetectedDatasource{}, false
 	}
 
 	url := "http://" + name
-	uid := makeUID(dsName)
+	uid := makeUID(uidSeed)
 
 	if !isValidUID(uid) {
 		slog.Warn("skipping app with invalid UID characters",
